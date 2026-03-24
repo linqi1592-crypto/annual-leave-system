@@ -184,6 +184,152 @@
             font-size: 16px;
             background: white;
         }
+        
+        /* 详情弹窗 */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            color: #999;
+            cursor: pointer;
+        }
+        
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        /* 请假记录列表 */
+        .leave-item {
+            padding: 16px;
+            border-bottom: 1px solid #f5f5f5;
+        }
+        
+        .leave-item:last-child {
+            border-bottom: none;
+        }
+        
+        .leave-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        
+        .leave-type {
+            font-weight: 500;
+            color: #333;
+        }
+        
+        .leave-duration {
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        .leave-date {
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+        
+        .leave-status {
+            font-size: 12px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        
+        .leave-status.approved {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .leave-status.withdrawn {
+            background: #fff3e0;
+            color: #ef6c00;
+        }
+        
+        .leave-reason {
+            font-size: 13px;
+            color: #999;
+            margin-top: 4px;
+        }
+        
+        /* 规则说明 */
+        .rule-section {
+            margin-bottom: 20px;
+        }
+        
+        .rule-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #667eea;
+        }
+        
+        .rule-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #f5f5f5;
+        }
+        
+        .rule-label {
+            color: #666;
+        }
+        
+        .rule-value {
+            font-weight: 500;
+            color: #333;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
     </style>
 </head>
 <body>
@@ -202,44 +348,100 @@
             <div class="loading">请选择员工查看年假信息</div>
         </div>
     </div>
+    
+    <!-- 详情弹窗 -->
+    <div id="detailModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title" id="modalTitle">详情</div>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- 动态内容 -->
+            </div>
+        </div>
+    </div>
 
     <script>
-        const API_BASE = 'http://localhost:8000/api';
+        // API 基础地址 - 生产环境需要修改
+        const API_BASE = window.location.hostname === 'localhost' 
+            ? 'http://localhost:8000/api' 
+            : '/api';
         
-        // 加载员工列表
+        // 当前选中的员工信息
+        let currentEmployee = null;
+        
+        // ==================== API 调用 ====================
+        
+        // 获取员工列表
         async function loadEmployees() {
             try {
-                // 这里应该从API获取，先模拟几个测试数据
-                const employees = ['张三', '李四', '王五'];
                 const select = document.getElementById('employeeSelect');
+                select.innerHTML = '<option value="">加载中...</option>';
+                select.disabled = true;
                 
-                employees.forEach(name => {
+                const response = await fetch(`${API_BASE}/employees`);
+                const result = await response.json();
+                
+                if (result.code !== 0) {
+                    throw new Error(result.message || '加载失败');
+                }
+                
+                const employees = result.data;
+                select.innerHTML = '<option value="">请选择员工...</option>';
+                select.disabled = false;
+                
+                employees.forEach(emp => {
                     const option = document.createElement('option');
-                    option.value = name;
-                    option.textContent = name;
+                    option.value = emp.user_id;  // 使用 employee_id
+                    option.textContent = emp.name + (emp.department ? ` (${emp.department})` : '');
+                    option.dataset.name = emp.name;
                     select.appendChild(option);
                 });
             } catch (error) {
                 console.error('加载员工列表失败:', error);
+                document.getElementById('employeeSelect').innerHTML = 
+                    '<option value="">加载失败，请刷新重试</option>';
             }
         }
         
         // 查询年假余额
-        async function queryLeaveBalance(employeeName) {
-            try {
-                const response = await fetch(`${API_BASE}/leave/balance?employee_name=${encodeURIComponent(employeeName)}`);
-                const result = await response.json();
-                
-                if (result.code !== 0) {
-                    throw new Error(result.message || '查询失败');
-                }
-                
-                return result.data;
-            } catch (error) {
-                console.error('查询年假余额失败:', error);
-                throw error;
+        async function queryLeaveBalance(employeeId) {
+            const response = await fetch(`${API_BASE}/leave/balance?employee_id=${encodeURIComponent(employeeId)}`);
+            const result = await response.json();
+            
+            if (result.code !== 0) {
+                throw new Error(result.message || '查询失败');
             }
+            
+            return result.data;
         }
+        
+        // 查询请假明细
+        async function queryLeaveHistory(employeeId) {
+            const response = await fetch(`${API_BASE}/leave/history?employee_id=${encodeURIComponent(employeeId)}`);
+            const result = await response.json();
+            
+            if (result.code !== 0) {
+                throw new Error(result.message || '查询失败');
+            }
+            
+            return result.data;
+        }
+        
+        // 查询计算规则
+        async function queryLeaveRules(employeeId) {
+            const response = await fetch(`${API_BASE}/leave/rules?employee_id=${encodeURIComponent(employeeId)}`);
+            const result = await response.json();
+            
+            if (result.code !== 0) {
+                throw new Error(result.message || '查询失败');
+            }
+            
+            return result.data;
+        }
+        
+        // ==================== 渲染函数 ====================
         
         // 渲染年假信息
         function renderLeaveInfo(data) {
@@ -303,6 +505,109 @@
             document.getElementById('content').innerHTML = html;
         }
         
+        // 渲染请假明细
+        function renderLeaveHistory(data) {
+            let html = '';
+            
+            if (data.records && data.records.length > 0) {
+                html += `<div style="margin-bottom: 16px; padding: 12px; background: #f5f5f5; border-radius: 8px;">
+                    <strong>统计：</strong>年假 ${data.summary.annual_leave_used}天 / 事假 ${data.summary.personal_leave_used}天
+                </div>`;
+                
+                data.records.forEach(record => {
+                    const statusClass = record.status === '已通过' ? 'approved' : 'withdrawn';
+                    html += `
+                        <div class="leave-item">
+                            <div class="leave-header">
+                                <span class="leave-type">${record.type}</span>
+                                <span class="leave-duration">${record.duration}天</span>
+                            </div>
+                            <div class="leave-date">${record.start_date} - ${record.end_date}</div>
+                            <span class="leave-status ${statusClass}">${record.status}</span>
+                            ${record.reason ? `<div class="leave-reason">${record.reason}</div>` : ''}
+                        </div>
+                    `;
+                });
+            } else {
+                html = '<div class="empty-state">暂无请假记录</div>';
+            }
+            
+            return html;
+        }
+        
+        // 渲染计算规则
+        function renderLeaveRules(data) {
+            const legal = data.legal_leave;
+            const welfare = data.welfare_leave;
+            const cap = data.cap;
+            const emp = data.employee;
+            
+            return `
+                <div class="rule-section">
+                    <div class="rule-title">员工信息</div>
+                    <div class="rule-item">
+                        <span class="rule-label">姓名</span>
+                        <span class="rule-value">${emp.name}</span>
+                    </div>
+                    <div class="rule-item">
+                        <span class="rule-label">社保工龄</span>
+                        <span class="rule-value">${emp.social_security_months}个月</span>
+                    </div>
+                    <div class="rule-item">
+                        <span class="rule-label">司龄</span>
+                        <span class="rule-value">${emp.service_years}年 (${emp.service_months}个月)</span>
+                    </div>
+                </div>
+                
+                <div class="rule-section">
+                    <div class="rule-title">法定年假</div>
+                    <div class="rule-item">
+                        <span class="rule-label">社保工龄</span>
+                        <span class="rule-value">${legal.base_months}个月</span>
+                    </div>
+                    <div class="rule-item">
+                        <span class="rule-label">年假天数</span>
+                        <span class="rule-value">${legal.days}天</span>
+                    </div>
+                    <div class="rule-item" style="background: #f5f5f5; margin: 0 -20px; padding: 12px 20px;">
+                        <span class="rule-label" style="color: #666; font-size: 13px;">${legal.description}</span>
+                    </div>
+                </div>
+                
+                <div class="rule-section">
+                    <div class="rule-title">福利年假</div>
+                    <div class="rule-item">
+                        <span class="rule-label">司龄年数</span>
+                        <span class="rule-value">${welfare.service_years}年</span>
+                    </div>
+                    <div class="rule-item">
+                        <span class="rule-label">年假天数</span>
+                        <span class="rule-value">${welfare.days}天</span>
+                    </div>
+                    <div class="rule-item" style="background: #f5f5f5; margin: 0 -20px; padding: 12px 20px;">
+                        <span class="rule-label" style="color: #666; font-size: 13px;">${welfare.description}</span>
+                    </div>
+                </div>
+                
+                <div class="rule-section">
+                    <div class="rule-title">封顶规则</div>
+                    <div class="rule-item">
+                        <span class="rule-label">小计</span>
+                        <span class="rule-value">${cap.subtotal}天</span>
+                    </div>
+                    <div class="rule-item">
+                        <span class="rule-label">封顶后</span>
+                        <span class="rule-value">${cap.capped}天</span>
+                    </div>
+                    ${cap.applied ? `
+                    <div class="rule-item" style="background: #fff3e0; margin: 0 -20px; padding: 12px 20px;">
+                        <span class="rule-label" style="color: #ef6c00;">已应用封顶限制</span>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+        
         // 显示错误
         function showError(message) {
             document.getElementById('content').innerHTML = `
@@ -310,30 +615,69 @@
             `;
         }
         
-        // 显示详情（待实现）
-        function showDetail(type) {
-            alert(`查看${type === 'history' ? '请假明细' : '计算规则'}功能开发中...`);
+        // ==================== 弹窗控制 ====================
+        
+        async function showDetail(type) {
+            if (!currentEmployee) return;
+            
+            const modal = document.getElementById('detailModal');
+            const title = document.getElementById('modalTitle');
+            const body = document.getElementById('modalBody');
+            
+            modal.classList.add('active');
+            body.innerHTML = '<div class="loading">加载中...</div>';
+            
+            try {
+                if (type === 'history') {
+                    title.textContent = '请假明细';
+                    const data = await queryLeaveHistory(currentEmployee.id);
+                    body.innerHTML = renderLeaveHistory(data);
+                } else if (type === 'rules') {
+                    title.textContent = '计算规则';
+                    const data = await queryLeaveRules(currentEmployee.id);
+                    body.innerHTML = renderLeaveRules(data);
+                }
+            } catch (error) {
+                body.innerHTML = `<div class="error">❌ ${error.message}</div>`;
+            }
         }
         
-        // 事件监听
+        function closeModal() {
+            document.getElementById('detailModal').classList.remove('active');
+        }
+        
+        // 点击弹窗外部关闭
+        document.getElementById('detailModal').addEventListener('click', (e) => {
+            if (e.target.id === 'detailModal') {
+                closeModal();
+            }
+        });
+        
+        // ==================== 事件监听 ====================
+        
         document.getElementById('employeeSelect').addEventListener('change', async (e) => {
-            const employeeName = e.target.value;
-            if (!employeeName) {
+            const employeeId = e.target.value;
+            const employeeName = e.target.options[e.target.selectedIndex].dataset.name;
+            
+            if (!employeeId) {
+                currentEmployee = null;
                 document.getElementById('content').innerHTML = '<div class="loading">请选择员工查看年假信息</div>';
                 return;
             }
             
+            currentEmployee = { id: employeeId, name: employeeName };
             document.getElementById('content').innerHTML = '<div class="loading">加载中...</div>';
             
             try {
-                const data = await queryLeaveBalance(employeeName);
+                const data = await queryLeaveBalance(employeeId);
                 renderLeaveInfo(data);
             } catch (error) {
                 showError(error.message || '查询失败，请稍后重试');
             }
         });
         
-        // 初始化
+        // ==================== 初始化 ====================
+        
         loadEmployees();
     </script>
 </body>
