@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>年假查询系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        .header {
+            text-align: center;
+            padding: 30px 0;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            color: #1a1a1a;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        
+        .balance-card {
+            text-align: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .balance-card .label {
+            font-size: 14px;
+            opacity: 0.9;
+            margin-bottom: 8px;
+        }
+        
+        .balance-card .number {
+            font-size: 48px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        
+        .balance-card .sub {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .stat-item {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        
+        .stat-item .label {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 8px;
+        }
+        
+        .stat-item .number {
+            font-size: 28px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .stat-item .note {
+            font-size: 11px;
+            color: #ff6b6b;
+            margin-top: 4px;
+        }
+        
+        .menu-list {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        
+        .menu-item {
+            display: flex;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid #f0f0f0;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .menu-item:last-child {
+            border-bottom: none;
+        }
+        
+        .menu-item:hover {
+            background: #f8f8f8;
+        }
+        
+        .menu-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 16px;
+            font-size: 20px;
+        }
+        
+        .menu-icon.blue { background: #e3f2fd; }
+        .menu-icon.green { background: #e8f5e9; }
+        .menu-icon.orange { background: #fff3e0; }
+        
+        .menu-text {
+            flex: 1;
+        }
+        
+        .menu-title {
+            font-size: 16px;
+            font-weight: 500;
+            color: #333;
+        }
+        
+        .menu-desc {
+            font-size: 12px;
+            color: #999;
+            margin-top: 2px;
+        }
+        
+        .menu-arrow {
+            color: #ccc;
+            font-size: 20px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+        
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .employee-selector {
+            margin-bottom: 20px;
+        }
+        
+        .employee-selector select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            background: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏖️ 年假查询</h1>
+        </div>
+        
+        <div class="employee-selector">
+            <select id="employeeSelect">
+                <option value="">请选择员工...</option>
+            </select>
+        </div>
+        
+        <div id="content">
+            <div class="loading">请选择员工查看年假信息</div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api';
+        
+        // 加载员工列表
+        async function loadEmployees() {
+            try {
+                // 这里应该从API获取，先模拟几个测试数据
+                const employees = ['张三', '李四', '王五'];
+                const select = document.getElementById('employeeSelect');
+                
+                employees.forEach(name => {
+                    const option = document.createElement('option');
+                    option.value = name;
+                    option.textContent = name;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('加载员工列表失败:', error);
+            }
+        }
+        
+        // 查询年假余额
+        async function queryLeaveBalance(employeeName) {
+            try {
+                const response = await fetch(`${API_BASE}/leave/balance?employee_name=${encodeURIComponent(employeeName)}`);
+                const result = await response.json();
+                
+                if (result.code !== 0) {
+                    throw new Error(result.message || '查询失败');
+                }
+                
+                return result.data;
+            } catch (error) {
+                console.error('查询年假余额失败:', error);
+                throw error;
+            }
+        }
+        
+        // 渲染年假信息
+        function renderLeaveInfo(data) {
+            const annual = data.annual_leave;
+            const adjustment = data.adjustment || {};
+            
+            const html = `
+                <div class="balance-card card">
+                    <div class="label">剩余年假</div>
+                    <div class="number">${annual.remaining}</div>
+                    <div class="sub">已用 ${annual.used.net} 天 / 总额 ${annual.total_quota} 天</div>
+                </div>
+                
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="label">${data.year}年度额度</div>
+                        <div class="number">${annual.current_year}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="label">上年结转</div>
+                        <div class="number">${annual.carryover}</div>
+                        ${annual.carryover_expire_date ? `<div class="note">${annual.carryover_expire_date}到期</div>` : ''}
+                    </div>
+                </div>
+                
+                ${adjustment.adjustment_amount ? `
+                <div class="card" style="background: #fff8e1;">
+                    <div style="font-size: 14px; color: #666; margin-bottom: 8px;">上年调整记录</div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span>系统计算剩余: ${adjustment.system_remaining}天</span>
+                        <span style="color: ${adjustment.adjustment_amount >= 0 ? '#4caf50' : '#f44336'};">
+                            ${adjustment.adjustment_amount >= 0 ? '+' : ''}${adjustment.adjustment_amount}天
+                        </span>
+                    </div>
+                    <div style="margin-top: 8px; font-weight: bold;">
+                        调整后剩余: ${adjustment.final_remaining}天
+                    </div>
+                </div>
+                ` : ''}
+                
+                <div class="menu-list">
+                    <div class="menu-item" onclick="showDetail('history')">
+                        <div class="menu-icon blue">📋</div>
+                        <div class="menu-text">
+                            <div class="menu-title">请假明细</div>
+                            <div class="menu-desc">查看本年度所有请假记录</div>
+                        </div>
+                        <div class="menu-arrow">›</div>
+                    </div>
+                    <div class="menu-item" onclick="showDetail('rules')">
+                        <div class="menu-icon green">📖</div>
+                        <div class="menu-text">
+                            <div class="menu-title">计算规则</div>
+                            <div class="menu-desc">了解年假计算方式</div>
+                        </div>
+                        <div class="menu-arrow">›</div>
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('content').innerHTML = html;
+        }
+        
+        // 显示错误
+        function showError(message) {
+            document.getElementById('content').innerHTML = `
+                <div class="error">❌ ${message}</div>
+            `;
+        }
+        
+        // 显示详情（待实现）
+        function showDetail(type) {
+            alert(`查看${type === 'history' ? '请假明细' : '计算规则'}功能开发中...`);
+        }
+        
+        // 事件监听
+        document.getElementById('employeeSelect').addEventListener('change', async (e) => {
+            const employeeName = e.target.value;
+            if (!employeeName) {
+                document.getElementById('content').innerHTML = '<div class="loading">请选择员工查看年假信息</div>';
+                return;
+            }
+            
+            document.getElementById('content').innerHTML = '<div class="loading">加载中...</div>';
+            
+            try {
+                const data = await queryLeaveBalance(employeeName);
+                renderLeaveInfo(data);
+            } catch (error) {
+                showError(error.message || '查询失败，请稍后重试');
+            }
+        });
+        
+        // 初始化
+        loadEmployees();
+    </script>
+</body>
+</html>
