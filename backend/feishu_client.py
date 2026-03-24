@@ -1,12 +1,18 @@
 """
-飞书 API 客户端
-用于获取 token 和读取多维表格数据
+飞书 API 客户端（Code Review 修复版）
+
+修复内容：
+1. 添加日志记录
+2. 增强错误处理
 """
 
 import requests
 import time
+import logging
 from typing import Optional, List, Dict, Any
 from config import FEISHU_CONFIG, FEISHU_API
+
+logger = logging.getLogger(__name__)
 
 
 class FeishuClient:
@@ -20,11 +26,14 @@ class FeishuClient:
         
         self._tenant_token: Optional[str] = None
         self._token_expire_time: float = 0
+        
+        logger.info("FeishuClient 初始化完成")
     
     def _get_tenant_access_token(self) -> str:
         """获取 tenant_access_token（带缓存）"""
         # 检查 token 是否过期（提前5分钟刷新）
         if self._tenant_token and time.time() < self._token_expire_time - 300:
+            logger.debug("使用缓存的 tenant_access_token")
             return self._tenant_token
         
         url = f"{self.base_url}{FEISHU_API['auth_url']}"
@@ -34,21 +43,29 @@ class FeishuClient:
         }
         
         try:
+            logger.info("正在获取 tenant_access_token...")
             response = requests.post(url, json=payload, timeout=10)
             response.raise_for_status()
             data = response.json()
             
             if data.get("code") != 0:
+                logger.error(f"获取 token 失败: {data.get('msg')}")
                 raise Exception(f"获取 token 失败: {data.get('msg')}")
             
             self._tenant_token = data["tenant_access_token"]
             # token 有效期7200秒，这里记录过期时间
-            self._token_expire_time = time.time() + data.get("expire", 7200)
+            expire = data.get("expire", 7200)
+            self._token_expire_time = time.time() + expire
             
+            logger.info(f"tenant_access_token 获取成功，有效期 {expire} 秒")
             return self._tenant_token
             
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
+            logger.error(f"请求 tenant_access_token 失败: {str(e)}")
             raise Exception(f"获取 tenant_access_token 失败: {str(e)}")
+        except Exception as e:
+            logger.error(f"获取 tenant_access_token 失败: {str(e)}")
+            raise
     
     def _get_headers(self) -> Dict[str, str]:
         """获取请求头"""
@@ -80,6 +97,9 @@ class FeishuClient:
         
         all_records = []
         page_token = None
+        page_count = 0
+        
+        logger.info(f"开始读取表格数据: table_id={table_id}, filter={filter_formula is not None}")
         
         while True:
             params = {"page_size": page_size}
@@ -94,24 +114,32 @@ class FeishuClient:
                 data = response.json()
                 
                 if data.get("code") != 0:
+                    logger.error(f"获取表格数据失败: {data.get('msg')}")
                     raise Exception(f"获取表格数据失败: {data.get('msg')}")
                 
                 items = data.get("data", {}).get("items", [])
                 all_records.extend(items)
+                page_count += 1
                 
                 # 检查是否有下一页
                 page_token = data.get("data", {}).get("page_token")
                 if not page_token or not items:
                     break
                     
-            except Exception as e:
+            except requests.exceptions.RequestException as e:
+                logger.error(f"请求表格数据失败: {str(e)}")
                 raise Exception(f"读取多维表格失败: {str(e)}")
+            except Exception as e:
+                logger.error(f"读取多维表格失败: {str(e)}")
+                raise
         
+        logger.info(f"表格数据读取完成: 共 {len(all_records)} 条记录，{page_count} 页")
         return all_records
     
     def get_employee_records(self) -> List[Dict[str, Any]]:
         """获取员工信息表记录"""
         from config import BITABLE_CONFIG
+        logger.debug("获取员工信息表")
         return self.get_bitable_records(BITABLE_CONFIG["employee_table_id"])
     
     def get_leave_records(self, employee_name: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -127,6 +155,7 @@ class FeishuClient:
         if employee_name:
             # 飞书多维表格筛选语法
             filter_formula = f'CurrentValue.[发起人] = "{employee_name}"'
+            logger.debug(f"按员工筛选请假记录: {employee_name}")
         
         return self.get_bitable_records(BITABLE_CONFIG["leave_table_id"], filter_formula)
 
@@ -137,6 +166,8 @@ feishu_client = FeishuClient()
 
 if __name__ == "__main__":
     # 测试
+    logging.basicConfig(level=logging.INFO)
+    
     try:
         print("测试获取 tenant_access_token...")
         token = feishu_client._get_tenant_access_token()
@@ -146,7 +177,8 @@ if __name__ == "__main__":
         employees = feishu_client.get_employee_records()
         print(f"✅ 读取成功: 共 {len(employees)} 条记录")
         if employees:
-            print(f"示例: {employees[0].get('fields', {}).get('发起人', 'N/A')}")
+            emp = employees[0]
+            print(f"示例: {emp.get('fields', {}).get('发起人', 'N/A')} (ID: {emp.get('record_id', 'N/A')})")
         
         print("\n测试读取请假记录表...")
         leaves = feishu_client.get_leave_records()
