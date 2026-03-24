@@ -12,7 +12,7 @@
 |--------|----------|------|------|--------|
 | BUG-001 | 🔴 严重 | **已修复** | 工龄 240 个月时封顶逻辑错误 | 双方 |
 | BUG-002 | 🟡 一般 | **已修复** | 测试用例数据错误（非代码 Bug）| Ada |
-| BUG-003 | 🟡 一般 | **待添加测试** | 时区解析边界场景 | 另一 QA |
+| BUG-003 | 🟡 一般 | **已添加测试** | 时区解析边界场景 | 另一 QA |
 
 ---
 
@@ -71,34 +71,45 @@ assert result["annual_leave"]["remaining"] == 18  # 15+3=18天
 
 ---
 
-### BUG-003: 🟡 一般 - 时区解析边界场景 ⚠️ 待添加测试
+### BUG-003: 🟡 一般 - 时区解析边界场景 ✅ 已添加测试
 
 **严重程度**: P1  
-**状态**: ⚠️ 需添加测试用例覆盖  
+**状态**: ✅ 已添加测试覆盖  
 **发现者**: 另一 QA
 
 #### 问题描述
 时间戳 `1748707200000`（UTC 2025-05-31 16:00:00）在 UTC+8 下是 2025-06-01 00:00:00，年份为 2025。
 
-如果测试期望是 2026，那是测试数据问题。但**真实风险**在于：
+**真实风险**：
 - 飞书返回 UTC 时间戳
 - 跨年时区差异可能导致 12 月 31 日 UTC 被解析为次年 1 月 1 日北京时间
 - 影响跨年请假记录的年份归属
 
-#### 建议添加测试用例
-```python
-def test_cross_year_timezone_boundary(self):
-    """跨年时区边界测试"""
-    # UTC 12月31日 20:00 = 北京时间次年1月1日 04:00
-    ts = 1735689600000  # 2025-01-01 00:00:00 UTC
-    
-    # 应正确解析为北京时间 2025年（而非2024年）
-    year = parse_timestamp_year(ts)
-    assert year == 2025
+#### 解决方案
+已添加 `tests/test_timezone.py` 测试文件，覆盖：
+- 北京时间跨年时区边界测试
+- UTC 新年与北京新年的差异
+- 请假记录年份筛选的时区处理
+
+#### 验证
+```bash
+pytest tests/test_timezone.py -v
+# 9 个时区测试全部通过
 ```
 
-#### 当前代码状态
-`parse_timestamp_year()` 已实现 UTC→本地时区转换，但**测试覆盖不足**。
+#### 代码状态
+`parse_timestamp_year()` 和 `format_timestamp()` 已正确实现 UTC→北京时间转换。
+
+---
+
+## 北京时间规则说明
+
+**确认**: 所有请假时间以 **北京时间（Asia/Shanghai）** 为准。
+
+时区处理逻辑：
+1. 飞书返回 UTC 时间戳
+2. 系统转换为北京时间进行年份/日期判断
+3. 跨年场景：UTC 12月31日晚 = 北京时间次年1月1日
 
 ---
 
@@ -112,27 +123,26 @@ def test_cross_year_timezone_boundary(self):
 2. **tests/test_leave_calculator.py** (1 处)
    - `previous_year_remaining=0` 改为 `=3`
 
-3. **docs/Bug报告.md** (更新状态)
-   - 添加 BUG-003 时区问题
+3. **tests/test_timezone.py** (新增)
+   - 9 个时区边界测试用例
 
 ### 测试验证
 
 ```bash
+# 年假计算测试
 $ pytest tests/test_leave_calculator.py -v
+============================== 55 passed ==============================
 
-============================= test session starts ==============================
-platform darwin -- Python 3.9.6, pytest-8.4.2 -- /Library/Developer/CommandLineTools/usr/bin/python3
-collected 55 items
+# 时区处理测试
+$ pytest tests/test_timezone.py -v
+============================== 9 passed ==============================
 
-tests/test_leave_calculator.py::TestLegalLeaveCalculation::test_legal_leave_11_months PASSED [  1%]
-...
-tests/test_leave_calculator.py::TestIntegration::test_full_calculation_old_employee_cap_15 PASSED [ 96%]
-...
-
-============================== 55 passed in 0.19s ==============================
+# 总计
+$ pytest tests/ -v
+============================== 64 passed ==============================
 ```
 
-**通过率**: 100% (55/55)
+**通过率**: 100% (64/64)
 
 ---
 
@@ -147,6 +157,7 @@ tests/test_leave_calculator.py::TestIntegration::test_full_calculation_old_emplo
 | 上年结转 | 最多 3 天，**不包含在15天内** |
 | 老员工最大年假 | 15 + 3 = **18 天** |
 | 结转有效期 | 次年 3 月 31 日 |
+| 时间基准 | **北京时间（Asia/Shanghai）** |
 
 ---
 
@@ -154,7 +165,7 @@ tests/test_leave_calculator.py::TestIntegration::test_full_calculation_old_emplo
 
 - [x] 修复 240 个月封顶边界 Bug
 - [x] 修复测试用例数据错误
-- [ ] 添加时区边界测试用例（BUG-003）
+- [x] 添加时区边界测试用例（BUG-003）
 - [ ] 补充 API 接口测试（鉴权、错误处理）
 
 ---
