@@ -72,8 +72,8 @@ class LeaveCalculator:
         """
         cap = self.rules["cap"]
         
-        # 老员工（工龄>240月）封顶15天
-        if social_security_months > cap["senior_threshold"]:
+        # 老员工（工龄>=240月）封顶15天
+        if social_security_months >= cap["senior_threshold"]:
             return min(total_leave, cap["senior"])
         
         # 一般员工封顶12天
