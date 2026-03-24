@@ -87,7 +87,13 @@ class AdjustmentResponse(BaseModel):
 async def verify_feishu_auth(authorization: Optional[str] = Header(None)):
     """
     验证飞书登录态
-    生产环境应该验证飞书的 user_access_token 或 tenant_access_token
+    
+    TODO: 生产环境需要完整实现
+    1. 调用飞书 /open-apis/authen/v1/user_info 验证 token 有效性
+    2. 检查用户是否有 HR 角色权限
+    3. 缓存验证结果避免重复请求
+    
+    当前简化实现仅检查 Bearer token 格式，用于演示和测试
     """
     if not authorization:
         logger.warning("HR 接口请求缺少 Authorization Header")
