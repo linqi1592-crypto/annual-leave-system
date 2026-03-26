@@ -1,6 +1,7 @@
 """
-年假计算引擎
-核心计算逻辑
+年假计算引擎 - v1.3 更新
+- P1-5: 司龄递增自动化（根据入职日期自动计算司龄）
+- P1-1: 余额卡片分栏展示（返回更详细的余额信息）
 """
 
 import math
@@ -14,6 +15,29 @@ class LeaveCalculator:
     
     def __init__(self):
         self.rules = LEAVE_RULES
+    
+    def calculate_service_months(self, entry_date: Optional[date], current_date: date) -> int:
+        """
+        根据入职日期计算司龄（月）- v1.3 P1-5 新增
+        
+        Args:
+            entry_date: 入职日期
+            current_date: 当前日期
+            
+        Returns:
+            司龄（月）
+        """
+        if not entry_date:
+            return 0
+        
+        months = (current_date.year - entry_date.year) * 12
+        months += current_date.month - entry_date.month
+        
+        # 如果当前日期还没到入职日，减去1个月
+        if current_date.day < entry_date.day:
+            months -= 1
+        
+        return max(0, months)
     
     def calculate_legal_leave(self, social_security_months: int) -> int:
         """
@@ -35,7 +59,7 @@ class LeaveCalculator:
     
     def calculate_welfare_leave(self, service_months: int) -> int:
         """
-        计算公司福利年假
+        计算公司福利年假（基于司龄月数）
         
         Args:
             service_months: 司龄（月）
@@ -132,7 +156,7 @@ class LeaveCalculator:
         计算上年结转年假
         
         Args:
-            previous_year_remaining: 上年剩余年假
+            previous_year_remaining: 上年剩余年假（v1.3 P1-2: 支持负数，负数结转为0）
             current_date: 当前日期
             
         Returns:
@@ -146,6 +170,10 @@ class LeaveCalculator:
         # 如果已过3月31日，结转清零
         if current_date > expire_date:
             return 0, None
+        
+        # v1.3 P1-2: 如果上年剩余为负数，结转为0（不传递负数）
+        if previous_year_remaining <= 0:
+            return 0, expire_date
         
         # 结转最多3天
         carryover_days = min(previous_year_remaining, carryover_rules["max_days"])
@@ -221,7 +249,7 @@ class LeaveCalculator:
         current_date: Optional[date] = None
     ) -> Dict[str, Any]:
         """
-        计算年假余额（完整流程）
+        计算年假余额（完整流程）- v1.3 更新
         
         Args:
             employee_data: 员工信息
@@ -230,7 +258,7 @@ class LeaveCalculator:
             current_date: 当前日期（默认今天）
             
         Returns:
-            年假计算结果
+            年假计算结果（包含 v1.3 P1-1 分栏展示所需数据）
         """
         if current_date is None:
             current_date = date.today()
@@ -240,16 +268,22 @@ class LeaveCalculator:
         # 提取员工信息
         fields = employee_data.get("fields", {})
         social_security_months = fields.get("工龄(月)", 0) or 0
-        service_months = fields.get("司龄(月)", 0) or 0
         
-        # 解析入职/离职日期
+        # v1.3 P1-5: 根据入职日期自动计算司龄
         entry_date = self._parse_date(fields.get("入职时间"))
+        service_months = self.calculate_service_months(entry_date, current_date)
+        
+        # 兼容：如果无法从入职日期计算，回退到读取表格字段
+        if service_months == 0 and fields.get("司龄(月)"):
+            service_months = fields.get("司龄(月)", 0) or 0
+        
+        # 解析离职日期
         leave_date = self._parse_date(fields.get("离职时间"))
         
         # 1. 计算法定年假
         legal_leave = self.calculate_legal_leave(social_security_months)
         
-        # 2. 计算福利年假
+        # 2. 计算福利年假（使用自动计算的司龄）
         welfare_leave = self.calculate_welfare_leave(service_months)
         
         # 3. 小计
@@ -272,9 +306,10 @@ class LeaveCalculator:
         # 8. 计算已用年假
         used_info = self.calculate_used_leave(leave_records, year)
         
-        # 9. 剩余年假
+        # 9. 剩余年假（v1.3 P1-2: 支持负数）
         remaining = total_quota - used_info["net"]
         
+        # v1.3 P1-1: 返回分栏展示所需数据
         return {
             "year": year,
             "current_date": current_date.isoformat(),
@@ -282,21 +317,33 @@ class LeaveCalculator:
                 "name": fields.get("发起人", ""),
                 "fullname": fields.get("Fullname", ""),
                 "social_security_months": social_security_months,
-                "service_months": service_months,
+                "service_months": service_months,  # v1.3: 自动计算的司龄
+                "service_years": service_months // 12,
                 "entry_date": entry_date.isoformat() if entry_date else None,
                 "leave_date": leave_date.isoformat() if leave_date else None,
             },
             "annual_leave": {
+                # v1.3 P1-1: 分栏展示数据
+                "current_year": {
+                    "quota": current_year_leave,
+                    "used": used_info["approved"],  # 当年额度中已使用的
+                },
+                "carryover": {
+                    "quota": carryover,
+                    "used": max(0, used_info["net"] - current_year_leave) if used_info["net"] > current_year_leave else 0,
+                    "expire_date": expire_date.isoformat() if expire_date else None,
+                },
+                "total_used": used_info["net"],
+                "remaining": remaining,
+                "is_negative": remaining < 0,  # v1.3 P1-2: 负数标识
+                
+                # 详细计算过程（保留供参考）
                 "legal_quota": legal_leave,
                 "welfare_quota": welfare_leave,
                 "subtotal": subtotal,
                 "capped": capped_leave,
-                "current_year": current_year_leave,
-                "carryover": carryover,
-                "carryover_expire_date": expire_date.isoformat() if expire_date else None,
                 "total_quota": total_quota,
                 "used": used_info,
-                "remaining": remaining,
             },
             "calculation_details": {
                 "formula": f"剩余年假 = 当年额度({current_year_leave}) + 结转({carryover}) - 已用({used_info['net']})",
@@ -337,35 +384,32 @@ calculator = LeaveCalculator()
 
 if __name__ == "__main__":
     # 测试计算逻辑
-    print("测试年假计算引擎...")
+    print("测试年假计算引擎 v1.3...")
     
-    # 测试用例1: 新员工
-    print("\n1. 新员工（司龄6个月，工龄6个月）")
+    # 测试用例1: 司龄自动计算
+    print("\n1. 司龄自动计算测试")
+    entry_date = date(2020, 3, 15)
+    current_date = date(2026, 3, 25)
+    service_months = calculator.calculate_service_months(entry_date, current_date)
+    print(f"   入职日期: {entry_date}, 当前日期: {current_date}")
+    print(f"   司龄: {service_months}个月 ({service_months // 12}年)")
+    
+    # 测试用例2: 新员工
+    print("\n2. 新员工（司龄6个月，工龄6个月）")
     legal = calculator.calculate_legal_leave(6)
     welfare = calculator.calculate_welfare_leave(6)
     print(f"   法定: {legal}天, 福利: {welfare}天")
     
-    # 测试用例2: 普通员工（司龄36个月，工龄36个月）
-    print("\n2. 普通员工（司龄3年，工龄3年）")
+    # 测试用例3: 普通员工
+    print("\n3. 普通员工（司龄3年，工龄3年）")
     legal = calculator.calculate_legal_leave(36)
     welfare = calculator.calculate_welfare_leave(36)
     capped = calculator.apply_cap(legal + welfare, 36)
     print(f"   法定: {legal}天, 福利: {welfare}天, 封顶后: {capped}天")
     
-    # 测试用例3: 老员工（司龄250个月，工龄250个月）
-    print("\n3. 老员工（司龄20年+，工龄20年+）")
-    legal = calculator.calculate_legal_leave(250)
-    welfare = calculator.calculate_welfare_leave(250)
-    capped = calculator.apply_cap(legal + welfare, 250)
-    print(f"   法定: {legal}天, 福利: {welfare}天, 封顶后: {capped}天")
-    
-    # 测试用例4: 结转
-    print("\n4. 结转测试（上年剩余4天，当前日期2026-03-15）")
-    carryover, expire = calculator.calculate_carryover(4, date(2026, 3, 15))
-    print(f"   可结转: {carryover}天, 到期日: {expire}")
-    
-    print("\n5. 结转测试（上年剩余4天，当前日期2026-04-01）")
-    carryover, expire = calculator.calculate_carryover(4, date(2026, 4, 1))
-    print(f"   可结转: {carryover}天, 到期日: {expire}")
+    # 测试用例4: 负数余额结转
+    print("\n4. 负数余额结转测试（上年剩余-2天）")
+    carryover, expire = calculator.calculate_carryover(-2, date(2026, 3, 15))
+    print(f"   可结转: {carryover}天 (负数应转为0)")
     
     print("\n✅ 测试完成")

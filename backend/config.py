@@ -28,6 +28,13 @@ if not FEISHU_CONFIG["app_token"]:
     logger.error("FEISHU_APP_TOKEN 未配置，请检查 .env 文件")
     raise ValueError("FEISHU_APP_TOKEN 是必填项")
 
+# JWT 配置
+JWT_CONFIG = {
+    "secret_key": os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production"),
+    "algorithm": "HS256",
+    "access_token_expire_minutes": int(os.getenv("JWT_EXPIRE_MINUTES", "480")),  # 默认8小时
+}
+
 # CORS 配置
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 if CORS_ORIGINS == "*":
@@ -52,6 +59,8 @@ FEISHU_API = {
     "auth_url": "/auth/v3/tenant_access_token/internal",
     "bitable_records": "/bitable/v1/apps/{app_token}/tables/{table_id}/records",
     "user_info": "/contact/v3/users/{user_id}",
+    "authen_access_token": "/authen/v1/access_token",  # 免登获取 user_access_token
+    "authen_user_info": "/authen/v1/user_info",  # 获取用户信息
 }
 
 # 年假规则配置
@@ -97,3 +106,6 @@ VALID_STATUSES = {
 DB_CONFIG = {
     "path": os.getenv("DB_PATH", "data/leave_adjustments.db"),
 }
+
+# HR 用户配置（简单配置，生产环境建议用飞书角色或数据库配置）
+HR_USERS = os.getenv("HR_USERS", "")  # 逗号分隔的 open_id 列表

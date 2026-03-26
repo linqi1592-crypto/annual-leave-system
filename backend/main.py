@@ -1,15 +1,12 @@
 """
-年假查询系统 - FastAPI 主服务（Code Review 修复版）
-
-修复内容：
-1. CORS 限制为指定域名
-2. HR 接口添加飞书鉴权
-3. POST 接口改用 Body 传参
-4. 员工查找支持 user_id
-5. 新增 /api/employees 接口
-6. 统一时区处理
-7. 添加日志记录
-8. 修复递归风险
+年假查询系统 - FastAPI 主服务 v1.3
+- P0: 飞书免登自动识别
+- P0-2: 调整记录操作人身份验证
+- P1-1: 余额卡片分栏展示
+- P1-2: 负数余额兼容性
+- P1-3: 批量导出
+- P1-4: 年终清算
+- P1-5: 司龄递增自动化
 """
 
 from fastapi import FastAPI, HTTPException, Query, Body, Header, Depends
@@ -28,6 +25,9 @@ from config import (
 from feishu_client import feishu_client
 from leave_calculator import calculator
 from adjustment_db import db
+from auth import auth_router, get_current_user, require_hr, require_employee_or_hr, User
+from export import export_router
+from year_end import year_end_router
 
 # 配置日志
 logging.basicConfig(
@@ -38,11 +38,11 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="年假查询系统",
-    description="飞书年假查询 API",
-    version="1.1.0"
+    description="飞书年假查询 API v1.3",
+    version="1.3.0"
 )
 
-# CORS 配置（根据环境变量限制）
+# CORS 配置
 if CORS_ALLOW_ALL:
     logger.warning("CORS 设置为允许所有来源，生产环境建议限制域名")
     allow_origins = ["*"]
@@ -64,12 +64,13 @@ tz = ZoneInfo(TIMEZONE)
 # ==================== Pydantic Models ====================
 
 class AdjustmentCreate(BaseModel):
-    """创建调整记录请求体"""
+    """创建调整记录请求体 - v1.3: 移除 created_by，后端自动获取"""
     employee_name: str
     year: int
     adjust_amount: float
     reason: str
-    created_by: str
+    # created_by 字段已移除，后端从 current_user 自动获取
+
 
 class AdjustmentResponse(BaseModel):
     """调整记录响应"""
@@ -79,37 +80,15 @@ class AdjustmentResponse(BaseModel):
     adjust_amount: float
     reason: str
     created_by: str
+    created_by_open_id: Optional[str] = None  # v1.3
     created_at: str
 
 
-# ==================== 鉴权依赖 ====================
+# ==================== 注册路由 ====================
 
-async def verify_feishu_auth(authorization: Optional[str] = Header(None)):
-    """
-    验证飞书登录态
-    
-    TODO: 生产环境需要完整实现
-    1. 调用飞书 /open-apis/authen/v1/user_info 验证 token 有效性
-    2. 检查用户是否有 HR 角色权限
-    3. 缓存验证结果避免重复请求
-    
-    当前简化实现仅检查 Bearer token 格式，用于演示和测试
-    """
-    if not authorization:
-        logger.warning("HR 接口请求缺少 Authorization Header")
-        raise HTTPException(status_code=401, detail="缺少认证信息")
-    
-    # TODO: 这里应该调用飞书 API 验证 token 有效性
-    # 简化处理：检查 Bearer token 格式
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="认证格式错误")
-    
-    # 实际生产环境应该：
-    # 1. 调用飞书 /open-apis/authen/v1/user_info 验证 token
-    # 2. 检查用户是否有 HR 角色权限
-    # 3. 返回用户信息供后续使用
-    
-    return authorization
+app.include_router(auth_router)
+app.include_router(export_router)
+app.include_router(year_end_router)
 
 
 # ==================== API 路由 ====================
@@ -117,23 +96,30 @@ async def verify_feishu_auth(authorization: Optional[str] = Header(None)):
 @app.get("/")
 def root():
     """根路径"""
-    return {"message": "年假查询系统 API", "version": "1.1.0"}
+    return {"message": "年假查询系统 API", "version": "1.3.0"}
 
 
 @app.get("/api/employees")
-def get_employees():
+def get_employees(current_user: User = Depends(get_current_user)):
     """
-    获取员工列表（用于前端下拉选择）
+    获取员工列表
+    v1.3: 普通员工只能看到自己，HR可以看到全部
     """
     try:
-        logger.info("获取员工列表")
+        logger.info(f"获取员工列表: user={current_user.name}, is_hr={current_user.is_hr}")
         employees = feishu_client.get_employee_records()
         
         result = []
         for emp in employees:
             fields = emp.get("fields", {})
+            emp_id = emp.get("record_id")
+            
+            # v1.3: 权限控制 - 普通员工只能看到自己
+            if not current_user.is_hr and current_user.employee_id != emp_id:
+                continue
+            
             result.append({
-                "user_id": emp.get("record_id"),  # 飞书记录 ID 作为唯一标识
+                "user_id": emp_id,
                 "name": fields.get("发起人", ""),
                 "fullname": fields.get("Fullname", ""),
                 "department": fields.get("发起部门", ""),
@@ -150,19 +136,23 @@ def get_employees():
 @app.get("/api/leave/balance")
 def get_leave_balance(
     employee_id: str = Query(..., description="员工ID（飞书记录ID）"),
-    year: Optional[int] = Query(None, description="查询年份（默认当前年）")
+    year: Optional[int] = Query(None, description="查询年份（默认当前年）"),
+    current_user: User = Depends(require_employee_or_hr)  # v1.3: 权限控制
 ):
     """
-    查询年假余额（使用 employee_id 而非姓名）
+    查询年假余额 - v1.3 更新
+    - P1-1: 余额分栏展示
+    - P1-2: 支持负数余额
+    - P1-5: 司龄自动计算
     """
     try:
         # 默认当前年
         if year is None:
             year = datetime.now(tz).year
         
-        logger.info(f"查询年假余额: employee_id={employee_id}, year={year}")
+        logger.info(f"查询年假余额: employee_id={employee_id}, year={year}, user={current_user.name}")
         
-        # 1. 获取员工信息（通过 ID 查找）
+        # 1. 获取员工信息
         employees = feishu_client.get_employee_records()
         employee = None
         employee_name = None
@@ -188,7 +178,7 @@ def get_leave_balance(
         adjustment = db.get_total_adjustment(employee_name, previous_year)
         previous_year_remaining = previous_system_remaining + adjustment
         
-        # 4. 计算年假余额
+        # 4. 计算年假余额（v1.3: 自动计算司龄，支持负数）
         current_date = date(year, datetime.now(tz).month, datetime.now(tz).day)
         result = calculator.calculate_annual_leave_balance(
             employee, leave_records, previous_year_remaining, current_date
@@ -214,11 +204,10 @@ def get_leave_balance(
 @app.get("/api/leave/history")
 def get_leave_history(
     employee_id: str = Query(..., description="员工ID（飞书记录ID）"),
-    year: Optional[int] = Query(None, description="查询年份（默认当前年）")
+    year: Optional[int] = Query(None, description="查询年份（默认当前年）"),
+    current_user: User = Depends(require_employee_or_hr)  # v1.3: 权限控制
 ):
-    """
-    查询请假明细（使用 employee_id）
-    """
+    """查询请假明细"""
     try:
         if year is None:
             year = datetime.now(tz).year
@@ -234,7 +223,7 @@ def get_leave_history(
         if not employee_name:
             raise HTTPException(status_code=404, detail=f"未找到员工: {employee_id}")
         
-        logger.info(f"查询请假明细: {employee_name}, year={year}")
+        logger.info(f"查询请假明细: {employee_name}, year={year}, user={current_user.name}")
         
         # 获取请假记录
         leave_records = feishu_client.get_leave_records(employee_name)
@@ -247,7 +236,7 @@ def get_leave_history(
         for record in leave_records:
             fields = record.get("fields", {})
             
-            # 检查年份（统一时区处理）
+            # 检查年份
             start_time = fields.get("开始时间")
             if start_time:
                 try:
@@ -312,9 +301,12 @@ def get_leave_history(
 
 
 @app.get("/api/leave/rules")
-def get_leave_rules(employee_id: str = Query(..., description="员工ID（飞书记录ID）")):
+def get_leave_rules(
+    employee_id: str = Query(..., description="员工ID（飞书记录ID）"),
+    current_user: User = Depends(require_employee_or_hr)
+):
     """
-    查询年假计算规则（使用 employee_id）
+    查询年假计算规则 - v1.3: 显示自动计算的司龄
     """
     try:
         # 通过 ID 查找员工
@@ -331,11 +323,14 @@ def get_leave_rules(employee_id: str = Query(..., description="员工ID（飞书
         if not employee:
             raise HTTPException(status_code=404, detail=f"未找到员工: {employee_id}")
         
-        logger.info(f"查询年假规则: {employee_name}")
+        logger.info(f"查询年假规则: {employee_name}, user={current_user.name}")
         
         fields = employee.get("fields", {})
         social_months = fields.get("工龄(月)", 0) or 0
-        service_months = fields.get("司龄(月)", 0) or 0
+        
+        # v1.3 P1-5: 自动计算司龄
+        entry_date = calculator._parse_date(fields.get("入职时间"))
+        service_months = calculator.calculate_service_months(entry_date, date.today())
         
         # 计算各阶段
         legal = calculator.calculate_legal_leave(social_months)
@@ -350,7 +345,8 @@ def get_leave_rules(employee_id: str = Query(..., description="员工ID（飞书
                     "name": employee_name,
                     "social_security_months": social_months,
                     "service_months": service_months,
-                    "service_years": service_months // 12
+                    "service_years": service_months // 12,
+                    "entry_date": entry_date.isoformat() if entry_date else None
                 },
                 "legal_leave": {
                     "base_months": social_months,
@@ -360,7 +356,7 @@ def get_leave_rules(employee_id: str = Query(..., description="员工ID（飞书
                 "welfare_leave": {
                     "service_years": service_months // 12,
                     "days": welfare,
-                    "description": f"司龄{service_months//12}年，福利年假{welfare}天"
+                    "description": f"司龄{service_months//12}年（自动计算），福利年假{welfare}天"
                 },
                 "cap": {
                     "subtotal": legal + welfare,
@@ -377,19 +373,17 @@ def get_leave_rules(employee_id: str = Query(..., description="员工ID（飞书
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ==================== 后台管理 API（需要鉴权） ====================
+# ==================== 后台管理 API（需要 HR 权限） ====================
 
 @app.get("/api/admin/adjustments")
 def get_adjustments(
     employee_name: str = Query(..., description="员工姓名"),
     year: int = Query(..., description="调整年度"),
-    auth: str = Depends(verify_feishu_auth)
+    current_user: User = Depends(require_hr)
 ):
-    """
-    查询调整记录（HR后台 - 需要鉴权）
-    """
+    """查询调整记录（HR后台）"""
     try:
-        logger.info(f"HR查询调整记录: {employee_name}, year={year}")
+        logger.info(f"HR查询调整记录: {employee_name}, year={year}, user={current_user.name}")
         summary = db.get_adjustment_summary(employee_name, year)
         return {"code": 0, "data": summary}
     except Exception as e:
@@ -400,21 +394,23 @@ def get_adjustments(
 @app.post("/api/admin/adjustments")
 def create_adjustment(
     adjustment: AdjustmentCreate,
-    auth: str = Depends(verify_feishu_auth)
+    current_user: User = Depends(require_hr)
 ):
     """
-    新增调整记录（HR后台 - 需要鉴权）
-    使用 Body 传参替代 Query，避免敏感信息出现在 URL 和日志中
+    新增调整记录（HR后台）- v1.3 P0-2: 操作人自动从 session 获取
     """
     try:
-        logger.info(f"HR创建调整记录: {adjustment.employee_name}, year={adjustment.year}, amount={adjustment.adjust_amount}")
+        logger.info(f"HR创建调整记录: {adjustment.employee_name}, year={adjustment.year}, user={current_user.name}")
         
+        # v1.3: 操作人信息从 current_user 自动获取，不再使用前端传入的 created_by
         record = db.create_adjustment(
             employee_name=adjustment.employee_name,
             year=adjustment.year,
             adjust_amount=adjustment.adjust_amount,
             reason=adjustment.reason,
-            created_by=adjustment.created_by
+            created_by=current_user.name,  # 自动获取
+            created_by_open_id=current_user.open_id,  # 自动获取
+            adjustment_type="manual"
         )
         
         logger.info(f"调整记录创建成功: id={record.id}")
@@ -429,6 +425,7 @@ def create_adjustment(
                 "adjust_amount": record.adjust_amount,
                 "reason": record.reason,
                 "created_by": record.created_by,
+                "created_by_open_id": record.created_by_open_id,
                 "created_at": record.created_at
             }
         }
@@ -440,13 +437,11 @@ def create_adjustment(
 @app.delete("/api/admin/adjustments/{record_id}")
 def delete_adjustment(
     record_id: int,
-    auth: str = Depends(verify_feishu_auth)
+    current_user: User = Depends(require_hr)
 ):
-    """
-    撤销调整记录（HR后台 - 需要鉴权）
-    """
+    """撤销调整记录（HR后台）"""
     try:
-        logger.info(f"HR撤销调整记录: id={record_id}")
+        logger.info(f"HR撤销调整记录: id={record_id}, user={current_user.name}")
         success = db.deactivate_adjustment(record_id)
         if not success:
             raise HTTPException(status_code=404, detail="调整记录不存在")
@@ -467,10 +462,7 @@ def delete_adjustment(
 # ==================== 辅助函数 ====================
 
 def parse_timestamp_year(timestamp) -> int:
-    """
-    统一时区解析时间戳，返回年份
-    支持毫秒级和秒级时间戳
-    """
+    """统一时区解析时间戳，返回年份"""
     if isinstance(timestamp, (int, float)):
         # 毫秒级时间戳（飞书默认）
         if timestamp > 1e10:
@@ -491,9 +483,7 @@ def parse_timestamp_year(timestamp) -> int:
 
 
 def format_timestamp(timestamp) -> str:
-    """
-    格式化时间戳为本地时间字符串
-    """
+    """格式化时间戳为本地时间字符串"""
     if not timestamp:
         return ""
     
@@ -518,10 +508,7 @@ def format_timestamp(timestamp) -> str:
 
 
 def calculate_previous_year_remaining_v2(employee: dict, employee_name: str, year: int) -> float:
-    """
-    计算某年度系统计算的剩余年假（修复版）
-    避免递归调用 balance API，直接计算
-    """
+    """计算某年度系统计算的剩余年假"""
     try:
         if not employee:
             return 0.0
@@ -556,5 +543,5 @@ def calculate_previous_year_remaining_v2(employee: dict, employee_name: str, yea
 
 
 if __name__ == "__main__":
-    logger.info("🚀 启动年假查询系统 API v1.1.0")
+    logger.info("🚀 启动年假查询系统 API v1.3")
     uvicorn.run(app, host="0.0.0.0", port=8000)
