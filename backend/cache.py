@@ -83,8 +83,21 @@ class MemoryCache:
             }
 
 
-# 全局缓存实例
-cache = MemoryCache()
+# 全局缓存实例 - 支持 Redis 或内存
+import os
+
+_cache_type = os.getenv('CACHE_TYPE', 'memory')
+if _cache_type == 'redis':
+    try:
+        from redis_cache import RedisCache
+        cache = RedisCache()
+        print("✓ 使用 Redis 缓存")
+    except Exception as e:
+        print(f"✗ Redis 连接失败，回退到内存缓存: {e}")
+        cache = MemoryCache()
+else:
+    cache = MemoryCache()
+    print("✓ 使用内存缓存")
 
 
 def cached(prefix: str, ttl: int = 3600, key_func: Callable = None):

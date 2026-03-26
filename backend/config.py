@@ -123,10 +123,13 @@ VALID_STATUSES = {
     "withdrawn": "已撤回",  # 加回年假
 }
 
-# 数据库配置
-DB_CONFIG = {
-    "path": os.getenv("DB_PATH", "data/leave_adjustments.db"),
-}
+# 缓存配置
+CACHE_TYPE = os.getenv("CACHE_TYPE", "memory")  # memory 或 redis
+CACHE_REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# 验证缓存配置
+if CACHE_TYPE == "redis" and not CACHE_REDIS_URL:
+    logger.warning("CACHE_TYPE=redis 但 REDIS_URL 未配置，将回退到内存缓存")
 
 # HR 用户配置（简单配置，生产环境建议用飞书角色或数据库配置）
 HR_USERS = os.getenv("HR_USERS", "")  # 逗号分隔的 open_id 列表
