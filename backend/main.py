@@ -30,6 +30,17 @@ from auth import auth_router, get_current_user, require_hr, require_employee_or_
 from export import export_router
 from year_end import year_end_router
 from cache import LeaveCache, cache
+from logger import setup_logging, logger
+from monitor_api import monitor_router
+
+# 配置日志 - v1.4
+setup_logging(
+    log_level=os.getenv("LOG_LEVEL", "INFO"),
+    log_dir="logs",
+    enable_file=True,
+    enable_console=True,
+    enable_json=True
+)
 
 # 配置日志
 logging.basicConfig(
@@ -91,6 +102,7 @@ class AdjustmentResponse(BaseModel):
 app.include_router(auth_router)
 app.include_router(export_router)
 app.include_router(year_end_router)
+app.include_router(monitor_router)  # v1.4: 日志监控API
 
 
 # ==================== API 路由 ====================
