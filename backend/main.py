@@ -1,15 +1,16 @@
 """
-年假查询系统 - FastAPI 主服务 v1.4
+年假查询系统 - FastAPI 主服务 v1.5
 - P0: 飞书免登自动识别
-- P0-2: 调整记录操作人身份验证
+- P0-2: 调整记录操作人身份验证  
 - P1-1: 余额卡片分栏展示
 - P1-2: 负数余额兼容性
 - P1-3: 批量导出
 - P1-4: 年终清算
 - P1-5: 司龄递增自动化
-- v1.4: 添加缓存机制
+- v1.5: 企业级优化（缓存/限流/PG/异步导出/监控）
 """
 
+import os  # P0 FIX: 添加缺失的 import
 from fastapi import FastAPI, HTTPException, Query, Body, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -52,8 +53,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="年假查询系统",
-    description="飞书年假查询 API v1.4",
-    version="1.4.0"
+    description="飞书年假查询 API v1.5",
+    version="1.5.0"
 )
 
 # CORS 配置
@@ -112,7 +113,7 @@ app.include_router(async_export_router)  # v1.5: 异步导出API
 @app.get("/")
 def root():
     """根路径"""
-    return {"message": "年假查询系统 API", "version": "1.3.0"}
+    return {"message": "年假查询系统 API", "version": "1.5.0"}
 
 
 @app.get("/api/employees")
