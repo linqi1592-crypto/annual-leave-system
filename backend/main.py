@@ -1,5 +1,5 @@
 """
-年假查询系统 - FastAPI 主服务 v1.3
+年假查询系统 - FastAPI 主服务 v1.4
 - P0: 飞书免登自动识别
 - P0-2: 调整记录操作人身份验证
 - P1-1: 余额卡片分栏展示
@@ -7,6 +7,7 @@
 - P1-3: 批量导出
 - P1-4: 年终清算
 - P1-5: 司龄递增自动化
+- v1.4: 添加缓存机制
 """
 
 from fastapi import FastAPI, HTTPException, Query, Body, Header, Depends
@@ -28,6 +29,7 @@ from adjustment_db import db
 from auth import auth_router, get_current_user, require_hr, require_employee_or_hr, User
 from export import export_router
 from year_end import year_end_router
+from cache import LeaveCache, cache
 
 # 配置日志
 logging.basicConfig(
@@ -38,8 +40,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="年假查询系统",
-    description="飞书年假查询 API v1.3",
-    version="1.3.0"
+    description="飞书年假查询 API v1.4",
+    version="1.4.0"
 )
 
 # CORS 配置
@@ -102,10 +104,20 @@ def root():
 @app.get("/api/employees")
 def get_employees(current_user: User = Depends(get_current_user)):
     """
-    获取员工列表
+    获取员工列表 - v1.4 添加缓存
     v1.3: 普通员工只能看到自己，HR可以看到全部
     """
     try:
+        # v1.4: 尝试从缓存获取
+        cache_key = LeaveCache.get_employees_key()
+        cached_result = cache.get(cache_key)
+        if cached_result is not None:
+            logger.info(f"员工列表缓存命中: user={current_user.name}")
+            # 即使是缓存，也要过滤权限
+            if not current_user.is_hr:
+                cached_result = [emp for emp in cached_result if emp["user_id"] == current_user.employee_id]
+            return {"code": 0, "data": cached_result}
+        
         logger.info(f"获取员工列表: user={current_user.name}, is_hr={current_user.is_hr}")
         employees = feishu_client.get_employee_records()
         
@@ -125,6 +137,10 @@ def get_employees(current_user: User = Depends(get_current_user)):
                 "department": fields.get("发起部门", ""),
             })
         
+        # v1.4: 存入缓存，TTL 5分钟（HR查看全部，普通员工只缓存全部）
+        if current_user.is_hr:
+            cache.set(cache_key, result, ttl=LeaveCache.TTL['employees'])
+        
         logger.info(f"获取到 {len(result)} 名员工")
         return {"code": 0, "data": result}
         
@@ -140,15 +156,23 @@ def get_leave_balance(
     current_user: User = Depends(require_employee_or_hr)  # v1.3: 权限控制
 ):
     """
-    查询年假余额 - v1.3 更新
+    查询年假余额 - v1.4 添加缓存
     - P1-1: 余额分栏展示
     - P1-2: 支持负数余额
     - P1-5: 司龄自动计算
+    - v1.4: 添加缓存，TTL 30分钟
     """
     try:
         # 默认当前年
         if year is None:
             year = datetime.now(tz).year
+        
+        # v1.4: 尝试从缓存获取
+        cache_key = LeaveCache.get_balance_key(employee_id, year)
+        cached_result = cache.get(cache_key)
+        if cached_result is not None:
+            logger.info(f"年假余额缓存命中: employee_id={employee_id}, year={year}")
+            return {"code": 0, "data": cached_result}
         
         logger.info(f"查询年假余额: employee_id={employee_id}, year={year}, user={current_user.name}")
         
@@ -190,6 +214,9 @@ def get_leave_balance(
             "adjustment_amount": adjustment,
             "final_remaining": previous_year_remaining
         }
+        
+        # v1.4: 存入缓存，TTL 30分钟
+        cache.set(cache_key, result, ttl=LeaveCache.TTL['leave_balance'])
         
         logger.info(f"年假余额查询成功: {employee_name}, 剩余{result['annual_leave']['remaining']}天")
         return {"code": 0, "data": result}
@@ -397,7 +424,9 @@ def create_adjustment(
     current_user: User = Depends(require_hr)
 ):
     """
-    新增调整记录（HR后台）- v1.3 P0-2: 操作人自动从 session 获取
+    新增调整记录（HR后台）- v1.4 添加缓存失效
+    - v1.3 P0-2: 操作人自动从 session 获取
+    - v1.4: 使相关缓存失效
     """
     try:
         logger.info(f"HR创建调整记录: {adjustment.employee_name}, year={adjustment.year}, user={current_user.name}")
@@ -412,6 +441,10 @@ def create_adjustment(
             created_by_open_id=current_user.open_id,  # 自动获取
             adjustment_type="manual"
         )
+        
+        # v1.4: 使年假余额缓存失效（因为调整会影响余额）
+        LeaveCache.invalidate_balance_by_name(adjustment.employee_name, adjustment.year)
+        logger.info(f"缓存已失效: employee={adjustment.employee_name}, year={adjustment.year}")
         
         logger.info(f"调整记录创建成功: id={record.id}")
         
@@ -513,6 +546,56 @@ def calculate_previous_year_remaining_v2(employee: dict, employee_name: str, yea
     return calculate_previous_year_remaining(employee, employee_name, year, feishu_client)
 
 
+# ==================== v1.4: 缓存监控 API ====================
+
+@app.get("/api/admin/cache/stats")
+def get_cache_stats(current_user: User = Depends(require_hr)):
+    """
+    获取缓存统计（HR监控）- v1.4
+    
+    Returns:
+        缓存命中统计、键数量等
+    """
+    try:
+        stats = LeaveCache.get_stats()
+        logger.info(f"HR查看缓存统计: user={current_user.name}, stats={stats}")
+        return {
+            "code": 0,
+            "data": {
+                "cache_stats": stats,
+                "ttl_config": LeaveCache.TTL,
+                "message": "缓存统计信息"
+            }
+        }
+    except Exception as e:
+        logger.error(f"获取缓存统计失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/cache/clear")
+def clear_cache_endpoint(
+    prefix: Optional[str] = Query(None, description="缓存前缀，空则全部清除"),
+    current_user: User = Depends(require_hr)
+):
+    """
+    清除缓存（HR管理）- v1.4
+    
+    Args:
+        prefix: 缓存前缀，如 'balance', 'employees'，空则清除全部
+    """
+    try:
+        cache.clear(prefix)
+        logger.info(f"HR清除缓存: user={current_user.name}, prefix={prefix or 'all'}")
+        return {
+            "code": 0,
+            "message": f"缓存已清除: {prefix or 'all'}",
+            "data": {"cleared_prefix": prefix}
+        }
+    except Exception as e:
+        logger.error(f"清除缓存失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
-    logger.info("🚀 启动年假查询系统 API v1.3")
+    logger.info("🚀 启动年假查询系统 API v1.4")
     uvicorn.run(app, host="0.0.0.0", port=8000)
