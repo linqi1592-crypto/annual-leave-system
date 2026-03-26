@@ -1,9 +1,10 @@
 """
-飞书 API 客户端（Code Review 修复版）
+飞书 API 客户端（v1.5 限流保护版）
 
 修复内容：
 1. 添加日志记录
-2. 增强错误处理
+2. 增强错误处理  
+3. v1.5: 添加 API 限流保护
 """
 
 import requests
@@ -27,7 +28,19 @@ class FeishuClient:
         self._tenant_token: Optional[str] = None
         self._token_expire_time: float = 0
         
-        logger.info("FeishuClient 初始化完成")
+        # v1.5: 初始化限流器
+        from rate_limiter import feishu_limiter
+        self.limiter = feishu_limiter
+        
+        logger.info("FeishuClient 初始化完成 (v1.5 限流保护)")
+    
+    def _check_rate_limit(self, api_type: str = "default", tokens: int = 1) -> bool:
+        """v1.5: 检查限流"""
+        if not self.limiter.acquire(api_type, tokens):
+            wait_time = self.limiter.get_wait_time(api_type)
+            logger.warning(f"飞书API限流触发: type={api_type}, 需等待{wait_time:.1f}秒")
+            return False
+        return True
     
     def _get_tenant_access_token(self) -> str:
         """获取 tenant_access_token（带缓存）"""
@@ -82,7 +95,7 @@ class FeishuClient:
         page_size: int = 500
     ) -> List[Dict[str, Any]]:
         """
-        获取多维表格记录
+        获取多维表格记录 - v1.5 添加限流保护
         
         Args:
             table_id: 表格 ID
@@ -92,6 +105,13 @@ class FeishuClient:
         Returns:
             记录列表
         """
+        # v1.5: 限流检查
+        if not self._check_rate_limit("bitable_records", tokens=2):
+            raise RuntimeError(
+                f"飞书API调用过于频繁，请稍后重试。"
+                f"预计等待: {self.limiter.get_wait_time('bitable_records'):.1f}秒"
+            )
+        
         url = f"{self.base_url}/bitable/v1/apps/{self.app_token}/tables/{table_id}/records"
         headers = self._get_headers()
         
