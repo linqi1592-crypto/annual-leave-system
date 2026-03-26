@@ -29,20 +29,41 @@ if not FEISHU_CONFIG["app_token"]:
     raise ValueError("FEISHU_APP_TOKEN 是必填项")
 
 # JWT 配置
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 JWT_CONFIG = {
-    "secret_key": os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production"),
+    "secret_key": JWT_SECRET_KEY or "your-secret-key-change-in-production",
     "algorithm": "HS256",
     "access_token_expire_minutes": int(os.getenv("JWT_EXPIRE_MINUTES", "480")),  # 默认8小时
 }
 
+# P1: JWT 默认密钥安全检查
+if not JWT_SECRET_KEY:
+    logger.error("=" * 60)
+    logger.error("严重安全警告: JWT_SECRET_KEY 未配置!")
+    logger.error("请设置环境变量 JWT_SECRET_KEY，使用强随机字符串")
+    logger.error("示例: export JWT_SECRET_KEY=$(openssl rand -hex 32)")
+    logger.error("=" * 60)
+    raise ValueError("JWT_SECRET_KEY 是必填项，拒绝启动")
+
 # CORS 配置
-CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
-if CORS_ORIGINS == "*":
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "")
+if not CORS_ORIGINS:
+    # 飞书工作台应用建议限制为飞书域名
+    CORS_ALLOW_ALL = False
+    CORS_ALLOWED_ORIGINS = [
+        "https://www.feishu.cn",
+        "https://open.feishu.cn",
+        "https://feishu.cn"
+    ]
+    logger.warning("CORS 未配置，已限制为飞书域名。如需开发调试，请设置 CORS_ORIGINS=*")
+elif CORS_ORIGINS == "*":
     CORS_ALLOW_ALL = True
     CORS_ALLOWED_ORIGINS = ["*"]
+    logger.warning("CORS 设置为允许所有来源，生产环境建议限制域名")
 else:
     CORS_ALLOW_ALL = False
     CORS_ALLOWED_ORIGINS = [origin.strip() for origin in CORS_ORIGINS.split(",")]
+    logger.info(f"CORS 允许的域名: {CORS_ALLOWED_ORIGINS}")
 
 # 时区配置
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Shanghai")

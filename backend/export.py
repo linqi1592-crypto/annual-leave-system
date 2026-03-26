@@ -36,15 +36,15 @@ def calculate_year_end_balance(
     计算某员工某年度年末余额
     """
     try:
-        from main import calculate_previous_year_remaining_v2
+        from leave_calculator import calculate_previous_year_remaining
         
         # 获取该年度的请假记录
         leave_records = feishu_client.get_leave_records(employee_name)
         
         # 上年剩余（系统计算+调整）
         previous_year = year - 1
-        previous_system_remaining = calculate_previous_year_remaining_v2(
-            employee, employee_name, previous_year
+        previous_system_remaining = calculate_previous_year_remaining(
+            employee, employee_name, previous_year, feishu_client
         )
         adjustment = db.get_total_adjustment(employee_name, previous_year)
         previous_year_remaining = previous_system_remaining + adjustment

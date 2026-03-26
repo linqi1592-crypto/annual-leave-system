@@ -358,18 +358,26 @@ class LeaveCalculator:
         }
     
     def _parse_date(self, date_value: Any) -> Optional[date]:
-        """解析日期字段"""
+        """解析日期字段 - P1: 统一时区处理"""
         if not date_value:
             return None
         
         try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("Asia/Shanghai")
+            
             if isinstance(date_value, (int, float)):
-                # 时间戳（毫秒）
-                return datetime.fromtimestamp(date_value / 1000).date()
+                # 时间戳（毫秒）- 统一使用 UTC 解析后转本地
+                if date_value > 1e10:
+                    dt = datetime.fromtimestamp(date_value / 1000, tz=ZoneInfo("UTC"))
+                else:
+                    dt = datetime.fromtimestamp(date_value, tz=ZoneInfo("UTC"))
+                return dt.astimezone(tz).date()
             elif isinstance(date_value, str):
                 # ISO 格式或普通日期字符串
                 if 'T' in date_value:
-                    return datetime.fromisoformat(date_value.replace('Z', '+00:00')).date()
+                    dt = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
+                    return dt.astimezone(tz).date()
                 else:
                     return datetime.strptime(date_value, "%Y-%m-%d").date()
         except:
@@ -380,6 +388,79 @@ class LeaveCalculator:
 
 # 全局计算器实例
 calculator = LeaveCalculator()
+
+
+def calculate_previous_year_remaining(
+    employee: dict, 
+    employee_name: str, 
+    year: int,
+    feishu_client_instance=None
+) -> float:
+    """
+    计算某年度系统计算的剩余年假（用于导出和年终清算）
+    
+    Args:
+        employee: 员工数据
+        employee_name: 员工姓名
+        year: 计算年份
+        feishu_client_instance: 飞书客户端实例（避免循环导入）
+    
+    Returns:
+        该年度剩余年假天数
+    """
+    try:
+        if not employee:
+            return 0.0
+        
+        # 延迟导入避免循环导入
+        if feishu_client_instance is None:
+            from feishu_client import feishu_client as fc
+            feishu_client_instance = fc
+        
+        # 获取该年度的请假记录
+        leave_records = feishu_client_instance.get_leave_records(employee_name)
+        
+        # 只保留该年度的记录
+        year_records = []
+        for record in leave_records:
+            fields = record.get("fields", {})
+            start_time = fields.get("开始时间")
+            if start_time:
+                try:
+                    # 统一时区解析
+                    from datetime import datetime
+                    from zoneinfo import ZoneInfo
+                    
+                    if isinstance(start_time, (int, float)):
+                        if start_time > 1e10:
+                            dt = datetime.fromtimestamp(start_time / 1000, tz=ZoneInfo("UTC"))
+                        else:
+                            dt = datetime.fromtimestamp(start_time, tz=ZoneInfo("UTC"))
+                        record_year = dt.astimezone(ZoneInfo("Asia/Shanghai")).year
+                    elif isinstance(start_time, str) and 'T' in start_time:
+                        dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                        record_year = dt.astimezone(ZoneInfo("Asia/Shanghai")).year
+                    else:
+                        record_year = int(str(start_time)[:4])
+                    
+                    if record_year == year:
+                        year_records.append(record)
+                except:
+                    continue
+        
+        # 计算该年度（假设没有上年结转）
+        year_end = date(year, 12, 31)
+        result = calculator.calculate_annual_leave_balance(
+            employee, year_records, 0.0, year_end
+        )
+        
+        return result["annual_leave"]["remaining"]
+        
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"计算上年剩余失败: {employee_name}, year={year}, error={e}")
+        return 0.0
 
 
 if __name__ == "__main__":

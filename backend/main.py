@@ -508,38 +508,9 @@ def format_timestamp(timestamp) -> str:
 
 
 def calculate_previous_year_remaining_v2(employee: dict, employee_name: str, year: int) -> float:
-    """计算某年度系统计算的剩余年假"""
-    try:
-        if not employee:
-            return 0.0
-        
-        # 获取该年度的请假记录
-        leave_records = feishu_client.get_leave_records(employee_name)
-        
-        # 只保留该年度的记录
-        year_records = []
-        for record in leave_records:
-            fields = record.get("fields", {})
-            start_time = fields.get("开始时间")
-            if start_time:
-                try:
-                    record_year = parse_timestamp_year(start_time)
-                    if record_year == year:
-                        year_records.append(record)
-                except:
-                    continue
-        
-        # 计算该年度（假设没有上年结转，直接从头计算）
-        year_end = date(year, 12, 31)
-        result = calculator.calculate_annual_leave_balance(
-            employee, year_records, 0.0, year_end
-        )
-        
-        return result["annual_leave"]["remaining"]
-        
-    except Exception as e:
-        logger.error(f"计算上年剩余失败: {employee_name}, year={year}, error={e}")
-        return 0.0
+    """计算某年度系统计算的剩余年假（兼容旧调用）"""
+    from leave_calculator import calculate_previous_year_remaining
+    return calculate_previous_year_remaining(employee, employee_name, year, feishu_client)
 
 
 if __name__ == "__main__":
