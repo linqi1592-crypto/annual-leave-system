@@ -199,11 +199,14 @@ class LeaveCache:
     @classmethod
     def invalidate_balance_by_name(cls, employee_name: str, year: int):
         """使年假余额缓存失效（通过员工姓名，用于调整记录后）"""
-        # 使用姓名作为 key 的一部分（简化处理）
+        # 只清除该员工相关缓存，不清空所有人
+        # 注意：这里假设缓存key中包含员工姓名，实际情况可能需要根据employee_id
+        # 这是一个简化实现，生产环境建议使用更精确的缓存失效策略
         key = f"balance:name:{employee_name}:{year}"
         cache.delete(key)
-        # 同时清除该员工所有年份的余额缓存
-        cache.clear(f"balance:")
+        # 同时清除该员工当年和前一年的缓存（因为调整可能影响结转计算）
+        prev_year_key = f"balance:name:{employee_name}:{year-1}"
+        cache.delete(prev_year_key)
     
     @classmethod
     def invalidate_employee(cls, employee_id: str):

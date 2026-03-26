@@ -35,7 +35,7 @@ from logger import setup_logging, logger
 from monitor_api import monitor_router
 from async_export_api import async_export_router
 
-# 配置日志 - v1.4
+# 配置日志 - v1.5（只初始化一次）
 setup_logging(
     log_level=os.getenv("LOG_LEVEL", "INFO"),
     log_dir="logs",
@@ -43,13 +43,6 @@ setup_logging(
     enable_console=True,
     enable_json=True
 )
-
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="年假查询系统",

@@ -1,12 +1,24 @@
+# 年假查询系统 - 必需依赖
+# 安装: pip install -r requirements.txt
+
+# Web框架
 fastapi>=0.104.0
 uvicorn>=0.24.0
+
+# HTTP请求
 requests>=2.31.0
+
+# 配置管理
 python-dotenv>=1.0.0
+
+# 数据验证
 pydantic>=2.5.0
+
+# 文件上传
 python-multipart>=0.0.6
+
+# JWT认证
 pyjwt>=2.8.0
+
+# Excel导出
 openpyxl>=3.1.2
-redis>=5.0.0
-sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.0
-pandas>=2.0.0

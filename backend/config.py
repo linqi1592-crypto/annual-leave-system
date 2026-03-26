@@ -123,6 +123,11 @@ VALID_STATUSES = {
     "withdrawn": "已撤回",  # 加回年假
 }
 
+# 数据库配置
+DB_CONFIG = {
+    "path": os.getenv("DB_PATH", "data/leave_adjustments.db"),
+}
+
 # 缓存配置
 CACHE_TYPE = os.getenv("CACHE_TYPE", "memory")  # memory 或 redis
 CACHE_REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
