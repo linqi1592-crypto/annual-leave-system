@@ -32,6 +32,7 @@ from year_end import year_end_router
 from cache import LeaveCache, cache
 from logger import setup_logging, logger
 from monitor_api import monitor_router
+from async_export_api import async_export_router
 
 # 配置日志 - v1.4
 setup_logging(
@@ -103,6 +104,7 @@ app.include_router(auth_router)
 app.include_router(export_router)
 app.include_router(year_end_router)
 app.include_router(monitor_router)  # v1.4: 日志监控API
+app.include_router(async_export_router)  # v1.5: 异步导出API
 
 
 # ==================== API 路由 ====================
