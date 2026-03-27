@@ -21,8 +21,8 @@ import uvicorn
 import logging
 
 from config import (
-    FEISHU_CONFIG, CORS_ALLOWED_ORIGINS, CORS_ALLOW_ALL, TIMEZONE,
-    logger as config_logger
+    FEISHU_CONFIG, CORS_ALLOWED_ORIGINS, CORS_ALLOW_ALL, TIMEZONE
+    # FIX: 不再导入 config_logger，避免重复
 )
 from feishu_client import feishu_client
 from leave_calculator import calculator
@@ -31,11 +31,11 @@ from auth import auth_router, get_current_user, require_hr, require_employee_or_
 from export import export_router
 from year_end import year_end_router
 from cache import LeaveCache, cache
-from logger import setup_logging, logger
+from logger import setup_logging, logger  # FIX: 只使用 logger 模块的日志
 from monitor_api import monitor_router
 from async_export_api import async_export_router
 
-# 配置日志 - v1.5（只初始化一次）
+# FIX: 日志只初始化一次，且必须在所有导入之后
 setup_logging(
     log_level=os.getenv("LOG_LEVEL", "INFO"),
     log_dir="logs",
@@ -605,5 +605,5 @@ def clear_cache_endpoint(
 
 
 if __name__ == "__main__":
-    logger.info("🚀 启动年假查询系统 API v1.4")
+    logger.info("🚀 启动年假查询系统 API v1.5")
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -16,6 +16,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# v1.5: pandas 导入保护（可选依赖）
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    pd = None
+    PANDAS_AVAILABLE = False
+    logger.warning("pandas 未安装，异步导出功能将不可用。安装: pip install pandas")
+
 
 class ExportStatus(Enum):
     """导出任务状态"""
@@ -155,12 +164,25 @@ class AsyncExportManager:
                 logger.error(f"Worker 错误: {e}")
                 time.sleep(1)
     
+    def process_task_async(self, task_id: str):
+        """公共接口：后台处理单个任务（供 FastAPI BackgroundTasks 调用）"""
+        self._process_task(task_id)
+    
     def _process_task(self, task_id: str):
-        """处理导出任务 - 真正计算年假"""
+        """处理导出任务 - 真正计算年假（内部实现）"""
+        # v1.5: 检查 pandas 是否可用
+        if not PANDAS_AVAILABLE:
+            logger.error(f"导出任务失败: pandas 未安装")
+            self.update_task(
+                task_id,
+                status=ExportStatus.FAILED.value,
+                error_message="pandas 未安装，无法生成 Excel。请安装: pip install pandas"
+            )
+            return
+        
         # 延迟导入避免循环依赖
         from feishu_client import feishu_client
         from leave_calculator import calculator
-        import pandas as pd
         
         task = self.get_task(task_id)
         if not task:

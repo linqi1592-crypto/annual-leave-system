@@ -1,11 +1,15 @@
 import os
 import logging
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# 尝试加载 .env 文件（如果 python-dotenv 已安装）
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # 未安装 python-dotenv，依赖系统环境变量
+
+# 日志配置延迟到应用启动时初始化
+# 避免在导入时就配置 basicConfig（会被后续 setup_logging 覆盖）
 logger = logging.getLogger(__name__)
 
 # 飞书配置（全部从环境变量读取，无默认值）

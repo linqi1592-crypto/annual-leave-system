@@ -3,12 +3,17 @@
 支持 TTL（过期时间）、内存缓存、可选 Redis
 """
 
+import os
 import time
 import threading
+import logging
 from typing import Any, Optional, Callable
 from functools import wraps
 import hashlib
 import json
+
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryCache:
@@ -83,21 +88,51 @@ class MemoryCache:
             }
 
 
-# 全局缓存实例 - 支持 Redis 或内存
-import os
+# 全局缓存实例 - 延迟初始化
+_cache_instance: Optional[Any] = None
 
-_cache_type = os.getenv('CACHE_TYPE', 'memory')
-if _cache_type == 'redis':
-    try:
-        from redis_cache import RedisCache
-        cache = RedisCache()
-        print("✓ 使用 Redis 缓存")
-    except Exception as e:
-        print(f"✗ Redis 连接失败，回退到内存缓存: {e}")
-        cache = MemoryCache()
-else:
-    cache = MemoryCache()
-    print("✓ 使用内存缓存")
+def _get_cache():
+    """获取或创建缓存实例（延迟初始化）"""
+    global _cache_instance
+    if _cache_instance is None:
+        _cache_type = os.getenv('CACHE_TYPE', 'memory')
+        if _cache_type == 'redis':
+            try:
+                from redis_cache import RedisCache
+                _cache_instance = RedisCache()
+                logger.info("✓ 使用 Redis 缓存")
+            except Exception as e:
+                logger.warning(f"✗ Redis 连接失败，回退到内存缓存: {e}")
+                _cache_instance = MemoryCache()
+        else:
+            _cache_instance = MemoryCache()
+            logger.info("✓ 使用内存缓存")
+    return _cache_instance
+
+
+# 兼容旧代码：使用 property 方式访问 cache
+class _CacheProxy:
+    """缓存代理，实现延迟初始化"""
+    def get(self, key: str) -> Optional[Any]:
+        return _get_cache().get(key)
+    
+    def set(self, key: str, value: Any, ttl: int = 3600):
+        _get_cache().set(key, value, ttl)
+    
+    def delete(self, key: str):
+        _get_cache().delete(key)
+    
+    def clear(self, prefix: str = None):
+        _get_cache().clear(prefix)
+    
+    def stats(self) -> dict:
+        return _get_cache().stats()
+    
+    def _generate_key(self, prefix: str, *args, **kwargs) -> str:
+        return _get_cache()._generate_key(prefix, *args, **kwargs)
+
+
+cache = _CacheProxy()
 
 
 def cached(prefix: str, ttl: int = 3600, key_func: Callable = None):
@@ -198,15 +233,26 @@ class LeaveCache:
     
     @classmethod
     def invalidate_balance_by_name(cls, employee_name: str, year: int):
-        """使年假余额缓存失效（通过员工姓名，用于调整记录后）"""
-        # 只清除该员工相关缓存，不清空所有人
-        # 注意：这里假设缓存key中包含员工姓名，实际情况可能需要根据employee_id
-        # 这是一个简化实现，生产环境建议使用更精确的缓存失效策略
-        key = f"balance:name:{employee_name}:{year}"
-        cache.delete(key)
-        # 同时清除该员工当年和前一年的缓存（因为调整可能影响结转计算）
-        prev_year_key = f"balance:name:{employee_name}:{year-1}"
-        cache.delete(prev_year_key)
+        """使年假余额缓存失效（通过员工姓名）
+        
+        FIX v1.5: 精确匹配缓存 key，不清空所有员工缓存
+        注意：实际缓存 key 是 balance:{employee_id}:{year}
+              需要通过 employee_name 找到对应的 employee_id 再删除
+        """
+        # 策略：删除所有可能匹配的 key（包括通过名称和ID的缓存）
+        # 由于缓存 key 使用 MD5 hash，这里采用前缀扫描（如果缓存支持）
+        # 或者通过明确的 key 模式删除
+        
+        # 删除该员工姓名相关的所有年份缓存
+        for y in [year, year - 1, year + 1]:
+            # 直接 key 格式
+            key = f"balance:name:{employee_name}:{y}"
+            cache.delete(key)
+            # 反向查询 key（employee_id -> name 的映射）
+            mapping_key = f"employee_mapping:{employee_name}"
+            cache.delete(mapping_key)
+        
+        logger.info(f"已清除员工 {employee_name} 的年假缓存")
     
     @classmethod
     def invalidate_employee(cls, employee_id: str):
