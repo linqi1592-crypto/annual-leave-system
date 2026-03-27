@@ -5,7 +5,7 @@ v1.3 新增
 
 import requests
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, Header, Depends
 from pydantic import BaseModel
@@ -162,7 +162,7 @@ class AuthManager:
         """
         创建 JWT token
         """
-        expire = datetime.utcnow() + timedelta(minutes=self.token_expire_minutes)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=self.token_expire_minutes)
         
         payload = {
             "open_id": user.open_id,
@@ -171,7 +171,7 @@ class AuthManager:
             "employee_name": user.employee_name,
             "is_hr": user.is_hr,
             "exp": expire,
-            "iat": datetime.utcnow()
+            "iat": datetime.now(timezone.utc)
         }
         
         token = jwt.encode(payload, self.jwt_secret, algorithm=self.jwt_algorithm)

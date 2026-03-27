@@ -3,6 +3,8 @@
 统一 SQLite/PostgreSQL 接口
 """
 import os
+import re
+import sqlite3
 from typing import Optional, Any, List, Dict
 from contextlib import contextmanager
 from config import DB_CONFIG, logger
@@ -31,17 +33,47 @@ class DatabaseAdapter:
         raise NotImplementedError
 
 
+class _SQLiteTransaction:
+    """SQLite 事务执行器 - 在事务中保持同一个连接"""
+    
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+    
+    def execute(self, sql: str, parameters: tuple = ()) -> int:
+        """在事务中执行 SQL"""
+        cursor = self.conn.execute(sql, parameters or ())
+        return cursor.lastrowid
+    
+    def fetchone(self, sql: str, parameters: tuple = ()) -> Optional[Dict]:
+        """在事务中查询单条"""
+        cursor = self.conn.execute(sql, parameters or ())
+        row = cursor.fetchone()
+        if row:
+            columns = [desc[0] for desc in cursor.description]
+            return dict(zip(columns, row))
+        return None
+    
+    def fetchall(self, sql: str, parameters: tuple = ()) -> List[Dict]:
+        """在事务中查询多条"""
+        cursor = self.conn.execute(sql, parameters or ())
+        rows = cursor.fetchall()
+        if rows:
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in rows]
+        return []
+
+
 class SQLiteAdapter(DatabaseAdapter):
     """SQLite 适配器（使用连接池）"""
     
     def __init__(self, db_path: str):
         from db_pool import PooledDB
         self.pool = PooledDB(db_path)
+        self.db_path = db_path
         logger.info(f"SQLiteAdapter 初始化: {db_path}")
     
     def execute(self, sql: str, parameters: tuple = ()) -> int:
         """执行SQL，返回最后插入的ID或影响行数"""
-        # PooledDB.execute 返回最后插入的ID
         return self.pool.execute(sql, parameters)
     
     def fetchone(self, sql: str, parameters: tuple = ()) -> Optional[Dict]:
@@ -54,9 +86,33 @@ class SQLiteAdapter(DatabaseAdapter):
     
     @contextmanager
     def transaction(self):
-        """事务上下文"""
-        # PooledDB 的连接池已经处理了事务
-        yield self
+        """事务上下文 - 真正的事务支持"""
+        conn = None
+        try:
+            # 直接从底层获取连接（绕过连接池的自动管理）
+            conn = sqlite3.connect(
+                self.db_path,
+                check_same_thread=False,
+                timeout=30
+            )
+            # 开始事务（显式 BEGIN）
+            conn.execute("BEGIN")
+            
+            # 创建事务执行器
+            tx = _SQLiteTransaction(conn)
+            yield tx
+            
+            # 提交事务
+            conn.commit()
+        except Exception as e:
+            # 回滚事务
+            if conn:
+                conn.rollback()
+            raise e
+        finally:
+            # 关闭连接
+            if conn:
+                conn.close()
 
 
 class PostgresAdapter(DatabaseAdapter):
@@ -67,21 +123,51 @@ class PostgresAdapter(DatabaseAdapter):
         self.db = PostgresDB(db_url)
         logger.info("PostgresAdapter 初始化")
     
+    def _convert_sql(self, sql: str) -> str:
+        """
+        将 SQLite 风格的 ? 占位符转换为 PostgreSQL 的 %s
+        使用状态机，只替换真正的占位符，不替换字符串中的 ?
+        """
+        result = []
+        in_string = False
+        string_char = None
+        i = 0
+        while i < len(sql):
+            char = sql[i]
+            if char in ("'", '"'):
+                if not in_string:
+                    in_string = True
+                    string_char = char
+                elif char == string_char:
+                    # 检查是否是转义（两个连续的引号）
+                    if i + 1 < len(sql) and sql[i + 1] == char:
+                        result.append(char)
+                        i += 1
+                    else:
+                        in_string = False
+                        string_char = None
+                result.append(char)
+            elif char == '?' and not in_string:
+                result.append('%s')
+            else:
+                result.append(char)
+            i += 1
+        return ''.join(result)
+    
     def execute(self, sql: str, parameters: tuple = ()) -> int:
         """执行SQL"""
-        # 转换 ? 占位符为 %s
-        sql = sql.replace("?", "%s")
+        sql = self._convert_sql(sql)
         result = self.db.execute(sql, list(parameters))
         return result
     
     def fetchone(self, sql: str, parameters: tuple = ()) -> Optional[Dict]:
         """查询单条记录"""
-        sql = sql.replace("?", "%s")
+        sql = self._convert_sql(sql)
         return self.db.fetchone(sql, list(parameters))
     
     def fetchall(self, sql: str, parameters: tuple = ()) -> List[Dict]:
         """查询多条记录"""
-        sql = sql.replace("?", "%s")
+        sql = self._convert_sql(sql)
         return self.db.fetchall(sql, list(parameters)) or []
     
     @contextmanager

@@ -22,15 +22,31 @@ FEISHU_CONFIG = {
 }
 
 # 验证必要配置
-if not FEISHU_CONFIG["app_id"]:
-    logger.error("FEISHU_APP_ID 未配置，请检查 .env 文件")
-    raise ValueError("FEISHU_APP_ID 是必填项")
-if not FEISHU_CONFIG["app_secret"]:
-    logger.error("FEISHU_APP_SECRET 未配置，请检查 .env 文件")
-    raise ValueError("FEISHU_APP_SECRET 是必填项")
-if not FEISHU_CONFIG["app_token"]:
-    logger.error("FEISHU_APP_TOKEN 未配置，请检查 .env 文件")
-    raise ValueError("FEISHU_APP_TOKEN 是必填项")
+# v1.5: 改为 lazy validation，避免导入时校验
+# if not FEISHU_CONFIG["app_id"]:
+#     logger.error("FEISHU_APP_ID 未配置，请检查 .env 文件")
+#     raise ValueError("FEISHU_APP_ID 是必填项")
+# if not FEISHU_CONFIG["app_secret"]:
+#     logger.error("FEISHU_APP_SECRET 未配置，请检查 .env 文件")
+#     raise ValueError("FEISHU_APP_SECRET 是必填项")
+# if not FEISHU_CONFIG["app_token"]:
+#     logger.error("FEISHU_APP_TOKEN 未配置，请检查 .env 文件")
+#     raise ValueError("FEISHU_APP_TOKEN 是必填项")
+
+# v1.5: Lazy validation - 延迟验证函数
+def validate_feishu_config():
+    """验证飞书配置，在应用启动时调用"""
+    missing = []
+    if not FEISHU_CONFIG["app_id"]:
+        missing.append("FEISHU_APP_ID")
+    if not FEISHU_CONFIG["app_secret"]:
+        missing.append("FEISHU_APP_SECRET")
+    if not FEISHU_CONFIG["app_token"]:
+        missing.append("FEISHU_APP_TOKEN")
+    
+    if missing:
+        logger.error(f"缺少必要配置: {', '.join(missing)}")
+        raise ValueError(f"缺少必要配置: {', '.join(missing)}")
 
 # JWT 配置
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
@@ -41,13 +57,24 @@ JWT_CONFIG = {
 }
 
 # P1: JWT 默认密钥安全检查
-if not JWT_SECRET_KEY:
-    logger.error("=" * 60)
-    logger.error("严重安全警告: JWT_SECRET_KEY 未配置!")
-    logger.error("请设置环境变量 JWT_SECRET_KEY，使用强随机字符串")
-    logger.error("示例: export JWT_SECRET_KEY=$(openssl rand -hex 32)")
-    logger.error("=" * 60)
-    raise ValueError("JWT_SECRET_KEY 是必填项，拒绝启动")
+# v1.5: 改为 lazy validation
+# if not JWT_SECRET_KEY:
+#     logger.error("=" * 60)
+#     logger.error("严重安全警告: JWT_SECRET_KEY 未配置!")
+#     logger.error("请设置环境变量 JWT_SECRET_KEY，使用强随机字符串")
+#     logger.error("示例: export JWT_SECRET_KEY=$(openssl rand -hex 32)")
+#     logger.error("=" * 60)
+#     raise ValueError("JWT_SECRET_KEY 是必填项，拒绝启动")
+
+def validate_jwt_config():
+    """验证 JWT 配置，在应用启动时调用"""
+    if not JWT_SECRET_KEY:
+        logger.error("=" * 60)
+        logger.error("严重安全警告: JWT_SECRET_KEY 未配置!")
+        logger.error("请设置环境变量 JWT_SECRET_KEY，使用强随机字符串")
+        logger.error("示例: export JWT_SECRET_KEY=$(openssl rand -hex 32)")
+        logger.error("=" * 60)
+        raise ValueError("JWT_SECRET_KEY 是必填项，拒绝启动")
 
 # CORS 配置
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "")
@@ -142,3 +169,10 @@ if CACHE_TYPE == "redis" and not CACHE_REDIS_URL:
 
 # HR 用户配置（简单配置，生产环境建议用飞书角色或数据库配置）
 HR_USERS = os.getenv("HR_USERS", "")  # 逗号分隔的 open_id 列表
+
+
+def validate_all_config():
+    """统一验证所有配置，在应用启动时调用"""
+    validate_feishu_config()
+    validate_jwt_config()
+    logger.info("✅ 所有配置验证通过")

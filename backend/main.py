@@ -21,8 +21,8 @@ import uvicorn
 import logging
 
 from config import (
-    FEISHU_CONFIG, CORS_ALLOWED_ORIGINS, CORS_ALLOW_ALL, TIMEZONE
-    # FIX: 不再导入 config_logger，避免重复
+    FEISHU_CONFIG, CORS_ALLOWED_ORIGINS, CORS_ALLOW_ALL, TIMEZONE,
+    validate_all_config  # v1.5: 延迟配置验证
 )
 from feishu_client import feishu_client
 from leave_calculator import calculator
@@ -43,6 +43,9 @@ setup_logging(
     enable_console=True,
     enable_json=True
 )
+
+# v1.5: 延迟验证配置（避免导入时就报错）
+validate_all_config()
 
 app = FastAPI(
     title="年假查询系统",
